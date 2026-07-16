@@ -4,6 +4,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   CalendarDays,
+  ChevronDown,
   Landmark,
   LockKeyhole,
   Plus,
@@ -14,7 +15,7 @@ import {
 const RATE = 60
 const STORAGE_KEY = 'egyptBudgetState'
 const INITIAL_STATE = {
-  totalUSDPool: 2000,
+  totalUSDPool: 2377.08,
   activeEGPBalance: 10000,
   activeHistory: [],
   checkpoints: [],
@@ -26,12 +27,25 @@ const money = (value) =>
     maximumFractionDigits: 2,
   })
 
+const normalizeCheckpoint = (checkpoint) => ({
+  ...checkpoint,
+  transactions: Array.isArray(checkpoint.transactions)
+    ? checkpoint.transactions
+    : [],
+})
+
 const loadState = () => {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (!saved) return INITIAL_STATE
     const parsed = JSON.parse(saved)
-    return { ...INITIAL_STATE, ...parsed }
+    return {
+      ...INITIAL_STATE,
+      ...parsed,
+      checkpoints: Array.isArray(parsed.checkpoints)
+        ? parsed.checkpoints.map(normalizeCheckpoint)
+        : [],
+    }
   } catch {
     return INITIAL_STATE
   }
@@ -60,10 +74,20 @@ function App() {
   const [funds, setFunds] = useState('')
   const [monthLimit, setMonthLimit] = useState('')
   const [notice, setNotice] = useState('')
+  const [expandedCheckpoints, setExpandedCheckpoints] = useState(() => new Set())
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(budget))
   }, [budget])
+
+  const toggleCheckpoint = (id) => {
+    setExpandedCheckpoints((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const announce = (message) => {
     setNotice('')
@@ -114,14 +138,17 @@ function App() {
 
   const setLimit = (event) => {
     event.preventDefault()
-    const amountEGP = Number(monthLimit)
-    if (!Number.isFinite(amountEGP) || amountEGP < 0) {
-      announce('Enter an EGP limit of zero or more.')
+    const amountUSD = Number(monthLimit)
+    if (!Number.isFinite(amountUSD) || amountUSD < 0) {
+      announce('Enter a USD limit of zero or more.')
       return
     }
+    const amountEGP = amountUSD * RATE
     setBudget((current) => ({ ...current, activeEGPBalance: amountEGP }))
     setMonthLimit('')
-    announce(`Month limit set to ${money(amountEGP)} EGP.`)
+    announce(
+      `Month limit set to $${money(amountUSD)} USD (${money(amountEGP)} EGP).`,
+    )
   }
 
   const closeMonth = () => {
@@ -130,6 +157,7 @@ function App() {
       closedAt: new Date().toISOString(),
       finalEGPBalance: budget.activeEGPBalance,
       txCount: budget.activeHistory.length,
+      transactions: [...budget.activeHistory],
     }
     setBudget((current) => ({
       ...current,
@@ -285,7 +313,7 @@ function App() {
                 <h2 id="period-heading">Period Setup</h2>
               </div>
               <p className="mt-3 max-w-xl text-sm font-medium leading-relaxed text-[#665d57]">
-                Set the active spending limit without changing your USD vault.
+                Set the active spending limit in USD. It converts to EGP at the fixed rate and does not change your USD vault.
               </p>
             </div>
             <form
@@ -296,12 +324,12 @@ function App() {
                 <Field
                   id="month-limit"
                   label="Set month limit"
-                  suffix="EGP"
+                  suffix="USD"
                   type="number"
                   inputMode="decimal"
                   min="0"
                   step="0.01"
-                  placeholder="12,000.00"
+                  placeholder="200.00"
                   value={monthLimit}
                   onChange={(event) => setMonthLimit(event.target.value)}
                 />
@@ -378,29 +406,90 @@ function App() {
             <div className="mt-6">
               {budget.checkpoints.length ? (
                 <ul className="divide-y-[3px] divide-[#d8cdc1]">
-                  {budget.checkpoints.map((checkpoint) => (
-                    <li className="flex items-center justify-between gap-4 py-4 first:pt-0" key={checkpoint.id}>
-                      <div>
-                        <time
-                          className="font-bold"
-                          dateTime={checkpoint.closedAt}
+                  {budget.checkpoints.map((checkpoint) => {
+                    const isOpen = expandedCheckpoints.has(checkpoint.id)
+                    const archivedTx = Array.isArray(checkpoint.transactions)
+                      ? checkpoint.transactions
+                      : []
+
+                    return (
+                      <li className="py-4 first:pt-0" key={checkpoint.id}>
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between gap-4 text-left"
+                          aria-expanded={isOpen}
+                          onClick={() => toggleCheckpoint(checkpoint.id)}
                         >
-                          {new Date(checkpoint.closedAt).toLocaleDateString([], {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                          })}
-                        </time>
-                        <p className="mt-1 text-xs font-semibold text-[#756a63]">
-                          {checkpoint.txCount} transaction{checkpoint.txCount === 1 ? '' : 's'}
-                        </p>
-                      </div>
-                      <p className="shrink-0 text-right font-extrabold">
-                        {money(checkpoint.finalEGPBalance)}
-                        <span className="ml-1 text-xs">EGP</span>
-                      </p>
-                    </li>
-                  ))}
+                          <div className="min-w-0">
+                            <time
+                              className="font-bold"
+                              dateTime={checkpoint.closedAt}
+                            >
+                              {new Date(checkpoint.closedAt).toLocaleDateString([], {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                              })}
+                            </time>
+                            <p className="mt-1 text-xs font-semibold text-[#756a63]">
+                              {checkpoint.txCount} transaction
+                              {checkpoint.txCount === 1 ? '' : 's'}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-3">
+                            <p className="text-right font-extrabold">
+                              {money(checkpoint.finalEGPBalance)}
+                              <span className="ml-1 text-xs">EGP</span>
+                            </p>
+                            <ChevronDown
+                              aria-hidden="true"
+                              size={20}
+                              className={`transition-transform duration-200 ${
+                                isOpen ? 'rotate-180' : ''
+                              }`}
+                            />
+                          </div>
+                        </button>
+
+                        {isOpen && (
+                          <div className="mt-4 rounded-md border-[3px] border-[#d8cdc1] bg-[#f6f0e8] px-4 py-3">
+                            {archivedTx.length ? (
+                              <ul className="divide-y-[2px] divide-[#d8cdc1]">
+                                {[...archivedTx].reverse().map((transaction) => (
+                                  <li
+                                    className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0"
+                                    key={transaction.id}
+                                  >
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-bold">
+                                        {transaction.desc || 'Untitled transaction'}
+                                      </p>
+                                      <time
+                                        className="mt-1 block text-xs font-semibold text-[#756a63]"
+                                        dateTime={transaction.timestamp}
+                                      >
+                                        {new Date(transaction.timestamp).toLocaleString([], {
+                                          dateStyle: 'medium',
+                                          timeStyle: 'short',
+                                        })}
+                                      </time>
+                                    </div>
+                                    <p className="shrink-0 text-sm font-extrabold text-[#a04432]">
+                                      − {money(transaction.amountEGP)} EGP
+                                    </p>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-sm font-semibold text-[#756a63]">
+                                No transaction details were saved for this period.
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    )
+                  })}
                 </ul>
               ) : (
                 <EmptyState text="Closed periods will be safely listed here." />
